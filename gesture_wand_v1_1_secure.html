@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; media-src 'self' blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'">
+<title>Gesture Wand V1.1</title>
+<style>
+html,body{margin:0;height:100%;background:#111;color:white;font-family:system-ui}
+#app{height:100%;position:relative;overflow:hidden}
+video{position:absolute;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);opacity:.28}
+#pointer{position:absolute;width:34px;height:34px;border:3px solid white;border-radius:50%;background:#ffe50066;display:none;transform:translate(-50%,-50%)}
+#panel{position:absolute;left:12px;right:12px;bottom:12px;background:#000d;border-radius:16px;padding:14px}
+button{padding:12px 16px;border:0;border-radius:10px;margin:6px 5px 0 0;font-weight:bold}
+#start{background:#ffd900}.stop{background:#333;color:white}.ok{color:#a8ffb0}.bad{color:#ff9999}
+</style>
+</head>
+<body>
+<div id="app">
+<video id="video" autoplay playsinline muted></video>
+<div id="pointer"></div>
+<div id="panel">
+<b>🪄 Gesture Wand V1.1</b>
+<div id="status">Cámara apagada</div>
+<div id="readout">Listo para iniciar.</div>
+<div id="gesture">Gesto: —</div>
+<button id="start">Activar cámara frontal</button>
+<button id="stop" class="stop" hidden>Detener cámara</button>
+<div id="error"></div>
+<small>Solo cámara frontal. Sin micrófono, Bluetooth, ubicación, almacenamiento ni conexiones externas. El procesamiento es local.</small>
+</div>
+</div>
+<script>
+"use strict";
+const video=document.getElementById("video");
+const pointer=document.getElementById("pointer");
+const status=document.getElementById("status");
+const readout=document.getElementById("readout");
+const gesture=document.getElementById("gesture");
+const error=document.getElementById("error");
+const start=document.getElementById("start");
+const stop=document.getElementById("stop");
+let stream=null,running=false,previous=null,lastGesture=0;
+const off=document.createElement("canvas"),ctx=off.getContext("2d",{willReadFrequently:true});
+
+function hsv(r,g,b){
+ r/=255;g/=255;b/=255;
+ const mx=Math.max(r,g,b),mn=Math.min(r,g,b),d=mx-mn;
+ let h=0;
+ if(d){if(mx===r)h=((g-b)/d)%6;else if(mx===g)h=(b-r)/d+2;else h=(r-g)/d+4;h*=60;if(h<0)h+=360}
+ return [h,mx===0?0:d/mx,mx];
+}
+function scan(){
+ if(!running)return;
+ if(video.readyState<2){requestAnimationFrame(scan);return}
+ const w=240,h=Math.max(1,Math.round(240*video.videoHeight/video.videoWidth));
+ off.width=w;off.height=h;ctx.drawImage(video,0,0,w,h);
+ const d=ctx.getImageData(0,0,w,h).data;
+ let x=0,y=0,n=0;
+ for(let j=0;j<h;j+=2)for(let i=0;i<w;i+=2){
+  const k=(j*w+i)*4,[H,S,V]=hsv(d[k],d[k+1],d[k+2]);
+  if(H>=40&&H<=70&&S>=.30&&V>=.45){x+=i;y+=j;n++}
+ }
+ if(n>35){
+  const px=(1-(x/n)/w)*innerWidth,py=((y/n)/h)*innerHeight,now=performance.now();
+  pointer.style.left=px+"px";pointer.style.top=py+"px";pointer.style.display="block";
+  readout.innerHTML='<span class="ok">Objeto amarillo detectado ✓</span> · X '+Math.round(px)+' · Y '+Math.round(py);
+  if(previous){
+   const dx=px-previous.x,dy=py-previous.y,dt=Math.max(16,now-previous.t);
+   if(Math.hypot(dx,dy)/(dt/1000)>180 && now-lastGesture>500){
+    gesture.textContent="Gesto: "+(Math.abs(dx)>Math.abs(dy)?(dx>0?"→ DERECHA":"← IZQUIERDA"):(dy>0?"↓ ABAJO":"↑ ARRIBA"));
+    gesture.className="ok";lastGesture=now;
+    if(navigator.vibrate)navigator.vibrate(45);
+   }
+  }
+  previous={x:px,y:py,t:now};
+ }else{
+  pointer.style.display="none";readout.textContent="Buscando el objeto amarillo…";previous=null;
+ }
+ requestAnimationFrame(scan);
+}
+async function startCamera(){
+ error.textContent="";
+ if(!window.isSecureContext){error.textContent="Por seguridad, abre este prototipo mediante HTTPS.";error.className="bad";return}
+ try{
+  stream=await navigator.mediaDevices.getUserMedia({
+   video:{facingMode:{ideal:"user"},width:{ideal:1280},height:{ideal:720}},
+   audio:false
+  });
+  video.srcObject=stream;await video.play();running=true;
+  status.textContent="Cámara frontal activa";status.className="ok";
+  start.hidden=true;stop.hidden=false;scan();
+ }catch(e){
+  error.textContent="No se pudo activar la cámara: "+e.name;
+  error.className="bad";
+ }
+}
+function stopCamera(){
+ running=false;previous=null;pointer.style.display="none";
+ if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}
+ video.srcObject=null;status.textContent="Cámara apagada";status.className="";
+ readout.textContent="Cámara detenida.";start.hidden=false;stop.hidden=true;
+}
+start.onclick=startCamera;stop.onclick=stopCamera;
+addEventListener("pagehide",stopCamera);
+</script>
+</body>
+</html>
