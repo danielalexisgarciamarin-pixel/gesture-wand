@@ -1,108 +1,1085 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="es">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; media-src 'self' blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'">
-<title>Gesture Wand V1.1</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy"
+content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; media-src 'self' blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'">
+<title>Gesture Wand V2</title>
+
 <style>
-html,body{margin:0;height:100%;background:#111;color:white;font-family:system-ui}
-#app{height:100%;position:relative;overflow:hidden}
-video{position:absolute;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);opacity:.28}
-#pointer{position:absolute;width:34px;height:34px;border:3px solid white;border-radius:50%;background:#ffe50066;display:none;transform:translate(-50%,-50%)}
-#panel{position:absolute;left:12px;right:12px;bottom:12px;background:#000d;border-radius:16px;padding:14px}
-button{padding:12px 16px;border:0;border-radius:10px;margin:6px 5px 0 0;font-weight:bold}
-#start{background:#ffd900}.stop{background:#333;color:white}.ok{color:#a8ffb0}.bad{color:#ff9999}
+*{box-sizing:border-box}
+body{
+  margin:0;
+  background:#090b10;
+  color:#fff;
+  font-family:Arial,sans-serif;
+  text-align:center;
+}
+h1{margin:14px 0 4px;font-size:25px}
+.sub{color:#9da6b5;margin-bottom:12px}
+
+#stage{
+  position:relative;
+  width:min(96vw,700px);
+  margin:auto;
+  overflow:hidden;
+  border-radius:18px;
+  background:#000;
+  border:1px solid #303744;
+}
+video{
+  display:block;
+  width:100%;
+  transform:scaleX(-1);
+}
+canvas{
+  position:absolute;
+  inset:0;
+  width:100%;
+  height:100%;
+  pointer-events:none;
+}
+
+.controls{
+  width:min(96vw,700px);
+  margin:12px auto;
+  display:grid;
+  gap:8px;
+}
+button{
+  padding:13px 10px;
+  border:0;
+  border-radius:10px;
+  background:#202632;
+  color:white;
+  font-weight:bold;
+}
+button:active{transform:scale(.98)}
+.primary{background:#1769ff}
+.warn{background:#754b00}
+
+#status{
+  width:min(96vw,700px);
+  margin:10px auto;
+  padding:12px;
+  border-radius:10px;
+  background:#111722;
+  text-align:left;
+  font-size:14px;
+}
+#gesture{
+  font-size:22px;
+  font-weight:bold;
+  margin-top:5px;
+}
+.info{
+  color:#9da6b5;
+  font-size:13px;
+  line-height:1.45;
+}
+.row{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:8px;
+}
 </style>
 </head>
+
 <body>
-<div id="app">
-<video id="video" autoplay playsinline muted></video>
-<div id="pointer"></div>
-<div id="panel">
-<b>🪄 Gesture Wand V1.1</b>
-<div id="status">Cámara apagada</div>
-<div id="readout">Listo para iniciar.</div>
-<div id="gesture">Gesto: —</div>
-<button id="start">Activar cámara frontal</button>
-<button id="stop" class="stop" hidden>Detener cámara</button>
-<div id="error"></div>
-<small>Solo cámara frontal. Sin micrófono, Bluetooth, ubicación, almacenamiento ni conexiones externas. El procesamiento es local.</small>
+
+<h1>🪄 Gesture Wand V2</h1>
+<div class="sub">Detección por forma · sin depender del color</div>
+
+<div id="stage">
+  <video id="video" autoplay playsinline muted></video>
+  <canvas id="overlay"></canvas>
 </div>
+
+<div class="controls">
+
+  <button class="primary" id="startBtn">
+    📷 ACTIVAR CÁMARA
+  </button>
+
+  <div class="row">
+    <button id="backgroundBtn">
+      1️⃣ CAPTURAR FONDO
+    </button>
+
+    <button id="objectBtn">
+      2️⃣ CAPTURAR OBJETO
+    </button>
+  </div>
+
+  <div class="row">
+    <button id="tipABtn">
+      Punta A
+    </button>
+
+    <button id="tipBBtn">
+      Punta B
+    </button>
+  </div>
+
+  <button class="warn" id="resetBtn">
+    🔄 RECALIBRAR
+  </button>
+
 </div>
+
+<div id="status">
+  <div id="message">Activa la cámara para comenzar.</div>
+  <div id="gesture">—</div>
+  <div class="info" id="details">
+    Primero capturaremos el fondo y después el objeto.
+  </div>
+</div>
+
 <script>
 "use strict";
-const video=document.getElementById("video");
-const pointer=document.getElementById("pointer");
-const status=document.getElementById("status");
-const readout=document.getElementById("readout");
-const gesture=document.getElementById("gesture");
-const error=document.getElementById("error");
-const start=document.getElementById("start");
-const stop=document.getElementById("stop");
-let stream=null,running=false,previous=null,lastGesture=0;
-const off=document.createElement("canvas"),ctx=off.getContext("2d",{willReadFrequently:true});
 
-function hsv(r,g,b){
- r/=255;g/=255;b/=255;
- const mx=Math.max(r,g,b),mn=Math.min(r,g,b),d=mx-mn;
- let h=0;
- if(d){if(mx===r)h=((g-b)/d)%6;else if(mx===g)h=(b-r)/d+2;else h=(r-g)/d+4;h*=60;if(h<0)h+=360}
- return [h,mx===0?0:d/mx,mx];
+/* =========================================================
+   GESTURE WAND V2
+   Detección de objetos alargados mediante:
+   - comparación con fondo
+   - componentes conectados
+   - eje principal
+   - extremos A/B
+   - seguimiento temporal
+   ========================================================= */
+
+const video = document.getElementById("video");
+const stage = document.getElementById("stage");
+const canvas = document.getElementById("overlay");
+const ctx = canvas.getContext("2d");
+
+const startBtn = document.getElementById("startBtn");
+const backgroundBtn = document.getElementById("backgroundBtn");
+const objectBtn = document.getElementById("objectBtn");
+const tipABtn = document.getElementById("tipABtn");
+const tipBBtn = document.getElementById("tipBBtn");
+const resetBtn = document.getElementById("resetBtn");
+
+const message = document.getElementById("message");
+const gesture = document.getElementById("gesture");
+const details = document.getElementById("details");
+
+let stream = null;
+let running = false;
+
+let background = null;
+let bgWidth = 0;
+let bgHeight = 0;
+
+let objectModel = null;
+let selectedTip = "A";
+
+let previousEnds = null;
+let previousTip = null;
+let previousTime = 0;
+let previousAngle = null;
+
+let lastGestureTime = 0;
+
+const workCanvas = document.createElement("canvas");
+const workCtx = workCanvas.getContext("2d", {willReadFrequently:true});
+
+/* =========================================================
+   UTILIDADES
+   ========================================================= */
+
+function setMessage(txt){
+  message.textContent = txt;
 }
-function scan(){
- if(!running)return;
- if(video.readyState<2){requestAnimationFrame(scan);return}
- const w=240,h=Math.max(1,Math.round(240*video.videoHeight/video.videoWidth));
- off.width=w;off.height=h;ctx.drawImage(video,0,0,w,h);
- const d=ctx.getImageData(0,0,w,h).data;
- let x=0,y=0,n=0;
- for(let j=0;j<h;j+=2)for(let i=0;i<w;i+=2){
-  const k=(j*w+i)*4,[H,S,V]=hsv(d[k],d[k+1],d[k+2]);
-  if(H>=40&&H<=70&&S>=.30&&V>=.45){x+=i;y+=j;n++}
- }
- if(n>35){
-  const px=(1-(x/n)/w)*innerWidth,py=((y/n)/h)*innerHeight,now=performance.now();
-  pointer.style.left=px+"px";pointer.style.top=py+"px";pointer.style.display="block";
-  readout.innerHTML='<span class="ok">Objeto amarillo detectado ✓</span> · X '+Math.round(px)+' · Y '+Math.round(py);
-  if(previous){
-   const dx=px-previous.x,dy=py-previous.y,dt=Math.max(16,now-previous.t);
-   if(Math.hypot(dx,dy)/(dt/1000)>180 && now-lastGesture>500){
-    gesture.textContent="Gesto: "+(Math.abs(dx)>Math.abs(dy)?(dx>0?"→ DERECHA":"← IZQUIERDA"):(dy>0?"↓ ABAJO":"↑ ARRIBA"));
-    gesture.className="ok";lastGesture=now;
-    if(navigator.vibrate)navigator.vibrate(45);
-   }
-  }
-  previous={x:px,y:py,t:now};
- }else{
-  pointer.style.display="none";readout.textContent="Buscando el objeto amarillo…";previous=null;
- }
- requestAnimationFrame(scan);
+
+function distance(a,b){
+  return Math.hypot(a.x-b.x,a.y-b.y);
 }
+
+function clamp(v,a,b){
+  return Math.max(a,Math.min(b,v));
+}
+
+function angleDiff(a,b){
+  let d = a-b;
+  while(d > Math.PI) d -= Math.PI*2;
+  while(d < -Math.PI) d += Math.PI*2;
+  return d;
+}
+
+/* =========================================================
+   CÁMARA
+   ========================================================= */
+
 async function startCamera(){
- error.textContent="";
- if(!window.isSecureContext){error.textContent="Por seguridad, abre este prototipo mediante HTTPS.";error.className="bad";return}
- try{
-  stream=await navigator.mediaDevices.getUserMedia({
-   video:{facingMode:{ideal:"user"},width:{ideal:1280},height:{ideal:720}},
-   audio:false
-  });
-  video.srcObject=stream;await video.play();running=true;
-  status.textContent="Cámara frontal activa";status.className="ok";
-  start.hidden=true;stop.hidden=false;scan();
- }catch(e){
-  error.textContent="No se pudo activar la cámara: "+e.name;
-  error.className="bad";
- }
+
+  if(!window.isSecureContext){
+    setMessage("⚠️ La cámara necesita HTTPS.");
+    return;
+  }
+
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    setMessage("⚠️ Este navegador no permite acceso a cámara.");
+    return;
+  }
+
+  try{
+
+    if(stream){
+      stream.getTracks().forEach(t=>t.stop());
+    }
+
+    stream = await navigator.mediaDevices.getUserMedia({
+      video:{
+        facingMode:"user",
+        width:{ideal:640},
+        height:{ideal:480}
+      },
+      audio:false
+    });
+
+    video.srcObject = stream;
+
+    await video.play();
+
+    running = true;
+
+    setMessage("📷 Cámara activa.");
+    details.textContent =
+      "Retira el objeto de la imagen y pulsa «Capturar fondo».";
+
+    requestAnimationFrame(scan);
+
+  }catch(err){
+
+    console.error(err);
+
+    setMessage("❌ No se pudo activar la cámara.");
+
+    details.textContent =
+      "Comprueba el permiso de cámara del navegador.";
+  }
 }
-function stopCamera(){
- running=false;previous=null;pointer.style.display="none";
- if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}
- video.srcObject=null;status.textContent="Cámara apagada";status.className="";
- readout.textContent="Cámara detenida.";start.hidden=false;stop.hidden=true;
+
+/* =========================================================
+   CAPTURA DEL FONDO
+   ========================================================= */
+
+function captureBackground(){
+
+  if(!running || video.readyState < 2){
+    setMessage("Primero activa la cámara.");
+    return;
+  }
+
+  const w = 180;
+  const h = Math.round(
+    w * video.videoHeight / video.videoWidth
+  );
+
+  workCanvas.width = w;
+  workCanvas.height = h;
+
+  workCtx.drawImage(video,0,0,w,h);
+
+  const img = workCtx.getImageData(0,0,w,h);
+
+  background = new Uint8ClampedArray(img.data);
+  bgWidth = w;
+  bgHeight = h;
+
+  objectModel = null;
+  previousEnds = null;
+  previousTip = null;
+
+  setMessage("✅ Fondo capturado.");
+
+  details.textContent =
+    "Ahora coloca tu objeto alargado frente a la cámara y pulsa «Capturar objeto».";
 }
-start.onclick=startCamera;stop.onclick=stopCamera;
-addEventListener("pagehide",stopCamera);
+
+/* =========================================================
+   CREACIÓN DE MÁSCARA
+   ========================================================= */
+
+function createMask(){
+
+  if(!background) return null;
+
+  const w = bgWidth;
+  const h = bgHeight;
+
+  workCtx.drawImage(video,0,0,w,h);
+
+  const img = workCtx.getImageData(0,0,w,h);
+  const d = img.data;
+
+  const mask = new Uint8Array(w*h);
+
+  for(let y=1;y<h-1;y++){
+
+    for(let x=1;x<w-1;x++){
+
+      const i=(y*w+x)*4;
+
+      const dr=Math.abs(d[i]-background[i]);
+      const dg=Math.abs(d[i+1]-background[i+1]);
+      const db=Math.abs(d[i+2]-background[i+2]);
+
+      const diff=(dr+dg+db)/3;
+
+      /*
+       * No miramos el color.
+       * Solamente preguntamos:
+       * ¿este píxel cambió respecto al fondo?
+       */
+
+      if(diff > 38){
+        mask[y*w+x]=1;
+      }
+    }
+  }
+
+  return mask;
+}
+
+/* =========================================================
+   DETECCIÓN DE COMPONENTES
+   ========================================================= */
+
+function findCandidates(mask){
+
+  const w=bgWidth;
+  const h=bgHeight;
+
+  const visited=new Uint8Array(w*h);
+  const candidates=[];
+
+  const stack=[];
+
+  for(let y=1;y<h-1;y++){
+
+    for(let x=1;x<w-1;x++){
+
+      const start=y*w+x;
+
+      if(!mask[start] || visited[start]) continue;
+
+      visited[start]=1;
+      stack.length=0;
+      stack.push(start);
+
+      const points=[];
+
+      while(stack.length){
+
+        const idx=stack.pop();
+
+        const px=idx%w;
+        const py=Math.floor(idx/w);
+
+        points.push({x:px,y:py});
+
+        const n1=idx-1;
+        const n2=idx+1;
+        const n3=idx-w;
+        const n4=idx+w;
+
+        if(px>0 && mask[n1] && !visited[n1]){
+          visited[n1]=1;
+          stack.push(n1);
+        }
+
+        if(px<w-1 && mask[n2] && !visited[n2]){
+          visited[n2]=1;
+          stack.push(n2);
+        }
+
+        if(py>0 && mask[n3] && !visited[n3]){
+          visited[n3]=1;
+          stack.push(n3);
+        }
+
+        if(py<h-1 && mask[n4] && !visited[n4]){
+          visited[n4]=1;
+          stack.push(n4);
+        }
+      }
+
+      if(points.length < 18) continue;
+      if(points.length > w*h*0.45) continue;
+
+      const candidate=analyzeComponent(points);
+
+      if(candidate && candidate.length > 18){
+        candidates.push(candidate);
+      }
+    }
+  }
+
+  return candidates;
+}
+
+/* =========================================================
+   ANÁLISIS DE FORMA
+   ========================================================= */
+
+function analyzeComponent(points){
+
+  let sx=0;
+  let sy=0;
+
+  let minX=Infinity;
+  let maxX=-Infinity;
+  let minY=Infinity;
+  let maxY=-Infinity;
+
+  for(const p of points){
+
+    sx+=p.x;
+    sy+=p.y;
+
+    minX=Math.min(minX,p.x);
+    maxX=Math.max(maxX,p.x);
+    minY=Math.min(minY,p.y);
+    maxY=Math.max(maxY,p.y);
+  }
+
+  const cx=sx/points.length;
+  const cy=sy/points.length;
+
+  let xx=0;
+  let yy=0;
+  let xy=0;
+
+  for(const p of points){
+
+    const dx=p.x-cx;
+    const dy=p.y-cy;
+
+    xx+=dx*dx;
+    yy+=dy*dy;
+    xy+=dx*dy;
+  }
+
+  xx/=points.length;
+  yy/=points.length;
+  xy/=points.length;
+
+  const theta=.5*Math.atan2(
+    2*xy,
+    xx-yy
+  );
+
+  const ux=Math.cos(theta);
+  const uy=Math.sin(theta);
+
+  let minProj=Infinity;
+  let maxProj=-Infinity;
+
+  for(const p of points){
+
+    const projection=
+      (p.x-cx)*ux+
+      (p.y-cy)*uy;
+
+    minProj=Math.min(minProj,projection);
+    maxProj=Math.max(maxProj,projection);
+  }
+
+  const length=maxProj-minProj;
+
+  if(length<18) return null;
+
+  const endBand=Math.max(3,length*.12);
+
+  let ax=0;
+  let ay=0;
+  let ac=0;
+
+  let bx=0;
+  let by=0;
+  let bc=0;
+
+  for(const p of points){
+
+    const projection=
+      (p.x-cx)*ux+
+      (p.y-cy)*uy;
+
+    if(projection <= minProj+endBand){
+      ax+=p.x;
+      ay+=p.y;
+      ac++;
+    }
+
+    if(projection >= maxProj-endBand){
+      bx+=p.x;
+      by+=p.y;
+      bc++;
+    }
+  }
+
+  if(!ac || !bc) return null;
+
+  const A={
+    x:ax/ac,
+    y:ay/ac
+  };
+
+  const B={
+    x:bx/bc,
+    y:by/bc
+  };
+
+  let perpSum=0;
+
+  for(const p of points){
+
+    const projection=
+      (p.x-cx)*ux+
+      (p.y-cy)*uy;
+
+    const perp=
+      (p.x-cx)*(-uy)+
+      (p.y-cy)*ux;
+
+    perpSum+=perp*perp;
+  }
+
+  const thickness=
+    Math.max(
+      2,
+      2*Math.sqrt(perpSum/points.length)
+    );
+
+  const aspect=length/thickness;
+
+  if(aspect < 1.45) return null;
+
+  const score=
+    aspect*Math.sqrt(points.length);
+
+  return {
+    points,
+    center:{x:cx,y:cy},
+    A,
+    B,
+    length,
+    thickness,
+    aspect,
+    area:points.length,
+    angle:theta,
+    score
+  };
+}
+
+/* =========================================================
+   ELECCIÓN DEL OBJETO
+   ========================================================= */
+
+function chooseCandidate(candidates){
+
+  if(!candidates.length) return null;
+
+  let best=null;
+  let bestScore=-Infinity;
+
+  for(const c of candidates){
+
+    let score=c.score;
+
+    if(objectModel){
+
+      const lengthRatio=
+        Math.min(c.length/objectModel.length,
+                 objectModel.length/c.length);
+
+      const aspectRatio=
+        Math.min(c.aspect/objectModel.aspect,
+                 objectModel.aspect/c.aspect);
+
+      score *=
+        .5+
+        .5*lengthRatio;
+
+      score *=
+        .65+
+        .35*aspectRatio;
+    }
+
+    if(previousEnds){
+
+      const centerDist=
+        distance(c.center,previousEnds.center);
+
+      score *=
+        1/(1+centerDist/90);
+    }
+
+    if(score>bestScore){
+
+      bestScore=score;
+      best=c;
+    }
+  }
+
+  return best;
+}
+
+/* =========================================================
+   CONVERSIÓN A PANTALLA
+   ========================================================= */
+
+function toScreen(p){
+
+  const rect=canvas.getBoundingClientRect();
+
+  /*
+   * El video está espejado visualmente,
+   * por eso invertimos X.
+   */
+
+  return {
+    x:rect.width-(p.x/bgWidth)*rect.width,
+    y:(p.y/bgHeight)*rect.height
+  };
+}
+
+/* =========================================================
+   ESTABILIZACIÓN DE EXTREMOS
+   ========================================================= */
+
+function stabilizeEnds(candidate){
+
+  let A=toScreen(candidate.A);
+  let B=toScreen(candidate.B);
+
+  if(previousEnds){
+
+    const normal=
+      distance(A,previousEnds.A)+
+      distance(B,previousEnds.B);
+
+    const swapped=
+      distance(A,previousEnds.B)+
+      distance(B,previousEnds.A);
+
+    if(swapped<normal){
+
+      const temp=A;
+      A=B;
+      B=temp;
+    }
+  }
+
+  return {
+    A,
+    B,
+    center:toScreen(candidate.center)
+  };
+}
+
+/* =========================================================
+   CALIBRAR OBJETO
+   ========================================================= */
+
+function captureObject(){
+
+  if(!background){
+    setMessage("Primero captura el fondo.");
+    return;
+  }
+
+  const mask=createMask();
+
+  if(!mask){
+    setMessage("No hay imagen disponible.");
+    return;
+  }
+
+  const candidates=findCandidates(mask);
+  const candidate=chooseCandidate(candidates);
+
+  if(!candidate){
+
+    setMessage("❌ No encuentro un objeto alargado.");
+
+    details.textContent=
+      "Prueba con un lápiz, palo, rama o varita sobre un fondo estable.";
+
+    return;
+  }
+
+  objectModel={
+    length:candidate.length,
+    aspect:candidate.aspect,
+    area:candidate.area
+  };
+
+  previousEnds=null;
+
+  setMessage("✅ Objeto calibrado.");
+
+  details.textContent=
+    "Objeto reconocido por su forma. Ahora elige Punta A o Punta B.";
+
+}
+
+/* =========================================================
+   SELECCIÓN DE PUNTA
+   ========================================================= */
+
+function selectTip(tip){
+
+  if(!objectModel){
+
+    setMessage("Primero captura el objeto.");
+
+    return;
+  }
+
+  selectedTip=tip;
+
+  previousTip=null;
+  previousAngle=null;
+  previousTime=performance.now();
+
+  setMessage(
+    "🪄 Punta "+tip+" seleccionada."
+  );
+
+  details.textContent=
+    "Mueve el objeto rápidamente para probar los gestos.";
+
+  tipABtn.style.outline=
+    tip==="A" ? "2px solid white" : "none";
+
+  tipBBtn.style.outline=
+    tip==="B" ? "2px solid white" : "none";
+}
+
+/* =========================================================
+   GESTOS
+   ========================================================= */
+
+function processGesture(tip, angle){
+
+  const now=performance.now();
+
+  if(!previousTip){
+
+    previousTip={...tip};
+    previousTime=now;
+    previousAngle=angle;
+
+    return;
+  }
+
+  const dt=(now-previousTime)/1000;
+
+  if(dt<=0){
+
+    previousTip={...tip};
+    previousTime=now;
+
+    return;
+  }
+
+  const dx=tip.x-previousTip.x;
+  const dy=tip.y-previousTip.y;
+
+  const speed=Math.hypot(dx,dy)/dt;
+
+  /*
+   * MOVIMIENTO DIRECCIONAL
+   */
+
+  if(speed>170 && now-lastGestureTime>450){
+
+    let g="";
+
+    if(Math.abs(dx)>Math.abs(dy)){
+      g=dx>0 ? "➡️ DERECHA" : "⬅️ IZQUIERDA";
+    }else{
+      g=dy>0 ? "⬇️ ABAJO" : "⬆️ ARRIBA";
+    }
+
+    gesture.textContent=g;
+    lastGestureTime=now;
+
+    if(navigator.vibrate){
+      navigator.vibrate(45);
+    }
+  }
+
+  /*
+   * ROTACIÓN
+   */
+
+  if(previousAngle!==null){
+
+    const da=angleDiff(angle,previousAngle);
+
+    if(
+      Math.abs(da)>.28 &&
+      speed<650 &&
+      now-lastGestureTime>600
+    ){
+
+      gesture.textContent=
+        da>0
+        ? "↻ ROTACIÓN"
+        : "↺ ROTACIÓN";
+
+      lastGestureTime=now;
+
+      if(navigator.vibrate){
+        navigator.vibrate(35);
+      }
+    }
+  }
+
+  previousTip={...tip};
+  previousTime=now;
+  previousAngle=angle;
+}
+
+/* =========================================================
+   DIBUJO
+   ========================================================= */
+
+function drawCandidate(candidate,ends){
+
+  ctx.clearRect(
+    0,
+    0,
+    canvas.width,
+    canvas.height
+  );
+
+  if(!candidate) return;
+
+  const A=ends.A;
+  const B=ends.B;
+
+  /*
+   * Eje del objeto
+   */
+
+  ctx.beginPath();
+  ctx.moveTo(A.x,A.y);
+  ctx.lineTo(B.x,B.y);
+
+  ctx.lineWidth=3;
+  ctx.strokeStyle="#00ff88";
+  ctx.stroke();
+
+  /*
+   * Punta A
+   */
+
+  ctx.beginPath();
+  ctx.arc(A.x,A.y,9,0,Math.PI*2);
+
+  ctx.fillStyle=
+    selectedTip==="A"
+    ? "#00ff88"
+    : "#ffffff";
+
+  ctx.fill();
+
+  /*
+   * Punta B
+   */
+
+  ctx.beginPath();
+  ctx.arc(B.x,B.y,9,0,Math.PI*2);
+
+  ctx.fillStyle=
+    selectedTip==="B"
+    ? "#00ff88"
+    : "#ffffff";
+
+  ctx.fill();
+
+  /*
+   * Centro
+   */
+
+  ctx.beginPath();
+  ctx.arc(
+    ends.center.x,
+    ends.center.y,
+    5,
+    0,
+    Math.PI*2
+  );
+
+  ctx.fillStyle="#00aaff";
+  ctx.fill();
+
+  /*
+   * Punta activa
+   */
+
+  const tip=
+    selectedTip==="A"
+    ? A
+    : B;
+
+  ctx.beginPath();
+  ctx.arc(tip.x,tip.y,18,0,Math.PI*2);
+
+  ctx.strokeStyle="#ffffff";
+  ctx.lineWidth=2;
+  ctx.stroke();
+}
+
+/* =========================================================
+   BUCLE PRINCIPAL
+   ========================================================= */
+
+function scan(){
+
+  if(!running) return;
+
+  if(
+    video.readyState>=2 &&
+    video.videoWidth>0
+  ){
+
+    canvas.width=video.clientWidth;
+    canvas.height=video.clientHeight;
+
+    if(background){
+
+      const mask=createMask();
+
+      if(mask){
+
+        const candidates=findCandidates(mask);
+        const candidate=chooseCandidate(candidates);
+
+        if(candidate){
+
+          const ends=stabilizeEnds(candidate);
+
+          previousEnds=ends;
+
+          drawCandidate(candidate,ends);
+
+          if(objectModel){
+
+            const tip=
+              selectedTip==="A"
+              ? ends.A
+              : ends.B;
+
+            processGesture(
+              tip,
+              Math.atan2(
+                ends.B.y-ends.A.y,
+                ends.B.x-ends.A.x
+              )
+            );
+
+            details.textContent=
+              "Forma: "+
+              candidate.aspect.toFixed(1)+
+              "× · Longitud: "+
+              Math.round(candidate.length)+
+              " · Área: "+
+              candidate.area;
+          }
+
+        }else{
+
+          ctx.clearRect(
+            0,0,
+            canvas.width,
+            canvas.height
+          );
+
+          if(objectModel){
+
+            details.textContent=
+              "Buscando el objeto…";
+          }
+        }
+      }
+    }
+  }
+
+  requestAnimationFrame(scan);
+}
+
+/* =========================================================
+   RECALIBRAR
+   ========================================================= */
+
+function resetCalibration(){
+
+  objectModel=null;
+  background=null;
+
+  previousEnds=null;
+  previousTip=null;
+  previousAngle=null;
+
+  gesture.textContent="—";
+
+  ctx.clearRect(
+    0,
+    0,
+    canvas.width,
+    canvas.height
+  );
+
+  setMessage(
+    "🔄 Calibración reiniciada."
+  );
+
+  details.textContent=
+    "Captura nuevamente el fondo y después el objeto.";
+}
+
+/* =========================================================
+   BOTONES
+   ========================================================= */
+
+startBtn.addEventListener(
+  "click",
+  startCamera
+);
+
+backgroundBtn.addEventListener(
+  "click",
+  captureBackground
+);
+
+objectBtn.addEventListener(
+  "click",
+  captureObject
+);
+
+tipABtn.addEventListener(
+  "click",
+  ()=>selectTip("A")
+);
+
+tipBBtn.addEventListener(
+  "click",
+  ()=>selectTip("B")
+);
+
+resetBtn.addEventListener(
+  "click",
+  resetCalibration
+);
+
 </script>
+
 </body>
 </html>
