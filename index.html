@@ -1506,4 +1506,2752 @@ function createMask(){
         );
 
       const db=
-      
+        Math.abs(
+          d[i+2]-
+          background[i+2]
+        );
+
+      const diff=
+        (dr+dg+db)/3;
+
+      if(diff>38){
+
+        mask[
+          y*w+x
+        ]=1;
+      }
+    }
+  }
+
+  return mask;
+}
+
+
+/* =========================================================
+   COMPONENTES
+   ========================================================= */
+
+function findCandidates(mask){
+
+  const w=bgWidth;
+  const h=bgHeight;
+
+  const visited=
+    new Uint8Array(
+      w*h
+    );
+
+  const candidates=[];
+
+  const stack=[];
+
+  for(
+    let y=1;
+    y<h-1;
+    y++
+  ){
+
+    for(
+      let x=1;
+      x<w-1;
+      x++
+    ){
+
+      const start=
+        y*w+x;
+
+      if(
+        !mask[start] ||
+        visited[start]
+      )
+        continue;
+
+      visited[start]=1;
+
+      stack.length=0;
+
+      stack.push(start);
+
+      const points=[];
+
+      while(stack.length){
+
+        const idx=
+          stack.pop();
+
+        const px=
+          idx%w;
+
+        const py=
+          Math.floor(
+            idx/w
+          );
+
+        points.push({
+          x:px,
+          y:py
+        });
+
+        const n1=idx-1;
+        const n2=idx+1;
+        const n3=idx-w;
+        const n4=idx+w;
+
+        if(
+          px>0 &&
+          mask[n1] &&
+          !visited[n1]
+        ){
+
+          visited[n1]=1;
+          stack.push(n1);
+        }
+
+        if(
+          px<w-1 &&
+          mask[n2] &&
+          !visited[n2]
+        ){
+
+          visited[n2]=1;
+          stack.push(n2);
+        }
+
+        if(
+          py>0 &&
+          mask[n3] &&
+          !visited[n3]
+        ){
+
+          visited[n3]=1;
+          stack.push(n3);
+        }
+
+        if(
+          py<h-1 &&
+          mask[n4] &&
+          !visited[n4]
+        ){
+
+          visited[n4]=1;
+          stack.push(n4);
+        }
+      }
+
+      if(points.length<18)
+        continue;
+
+      if(points.length>w*h*.45)
+        continue;
+
+      const candidate=
+        analyzeComponent(
+          points
+        );
+
+      if(
+        candidate &&
+        candidate.length>18
+      ){
+
+        candidates.push(
+          candidate
+        );
+      }
+    }
+  }
+
+  return candidates;
+}
+
+
+/* =========================================================
+   ANÁLISIS DE FORMA
+   ========================================================= */
+
+function analyzeComponent(points){
+
+  let sx=0;
+  let sy=0;
+
+  for(const p of points){
+
+    sx+=p.x;
+    sy+=p.y;
+  }
+
+  const cx=
+    sx/points.length;
+
+  const cy=
+    sy/points.length;
+
+  let xx=0;
+  let yy=0;
+  let xy=0;
+
+  for(const p of points){
+
+    const dx=p.x-cx;
+    const dy=p.y-cy;
+
+    xx+=dx*dx;
+    yy+=dy*dy;
+    xy+=dx*dy;
+  }
+
+  xx/=points.length;
+  yy/=points.length;
+  xy/=points.length;
+
+  const theta=
+    .5*Math.atan2(
+      2*xy,
+      xx-yy
+    );
+
+  const ux=Math.cos(theta);
+  const uy=Math.sin(theta);
+
+  let minProj=Infinity;
+  let maxProj=-Infinity;
+
+  for(const p of points){
+
+    const projection=
+      (p.x-cx)*ux+
+      (p.y-cy)*uy;
+
+    minProj=
+      Math.min(
+        minProj,
+        projection
+      );
+
+    maxProj=
+      Math.max(
+        maxProj,
+        projection
+      );
+  }
+
+  const length=
+    maxProj-minProj;
+
+  if(length<18)
+    return null;
+
+  const endBand=
+    Math.max(
+      3,
+      length*.12
+    );
+
+  let ax=0;
+  let ay=0;
+  let ac=0;
+
+  let bx=0;
+  let by=0;
+  let bc=0;
+
+  let perpSum=0;
+
+  for(const p of points){
+
+    const projection=
+      (p.x-cx)*ux+
+      (p.y-cy)*uy;
+
+    const perp=
+      (p.x-cx)*(-uy)+
+      (p.y-cy)*ux;
+
+    perpSum+=
+      perp*perp;
+
+    if(
+      projection<=
+      minProj+endBand
+    ){
+
+      ax+=p.x;
+      ay+=p.y;
+      ac++;
+    }
+
+    if(
+      projection>=
+      maxProj-endBand
+    ){
+
+      bx+=p.x;
+      by+=p.y;
+      bc++;
+    }
+  }
+
+  if(!ac || !bc)
+    return null;
+
+  const A={
+    x:ax/ac,
+    y:ay/ac
+  };
+
+  const B={
+    x:bx/bc,
+    y:by/bc
+  };
+
+  const thickness=
+    Math.max(
+      2,
+      2*Math.sqrt(
+        perpSum/
+        points.length
+      )
+    );
+
+  const aspect=
+    length/thickness;
+
+  if(aspect<1.45)
+    return null;
+
+  return{
+
+    center:{
+      x:cx,
+      y:cy
+    },
+
+    A,
+    B,
+
+    length,
+    thickness,
+    aspect,
+
+    area:
+      points.length,
+
+    angle:theta,
+
+    score:
+      aspect*
+      Math.sqrt(
+        points.length
+      )
+  };
+}
+
+
+/* =========================================================
+   ESCOLHER OBJETO
+   ========================================================= */
+
+function chooseCandidate(
+  candidates
+){
+
+  if(!candidates.length)
+    return null;
+
+  let best=null;
+  let bestScore=-Infinity;
+
+  for(const c of candidates){
+
+    let score=c.score;
+
+    if(objectModel){
+
+      const lengthRatio=
+        Math.min(
+          c.length/
+            objectModel.length,
+
+          objectModel.length/
+            c.length
+        );
+
+      const aspectRatio=
+        Math.min(
+          c.aspect/
+            objectModel.aspect,
+
+          objectModel.aspect/
+            c.aspect
+        );
+
+      score*=
+        .55+
+        .45*
+        lengthRatio;
+
+      score*=
+        .68+
+        .32*
+        aspectRatio;
+    }
+
+    if(previousEnds){
+
+      const centerDist=
+        distance(
+          c.center,
+          previousEnds.center
+        );
+
+      score*=
+        1/
+        (1+centerDist/75);
+    }
+
+    if(score>bestScore){
+
+      bestScore=score;
+      best=c;
+    }
+  }
+
+  return best;
+}
+
+
+/* =========================================================
+   COORDENADAS
+   ========================================================= */
+
+function toScreen(p){
+
+  const rect=
+    canvas.getBoundingClientRect();
+
+  return{
+
+    x:
+      rect.width-
+      (p.x/bgWidth)*
+      rect.width,
+
+    y:
+      (p.y/bgHeight)*
+      rect.height
+  };
+}
+
+
+/* =========================================================
+   EXTREMOS ESTABLES
+   ========================================================= */
+
+function stabilizeEnds(
+  candidate
+){
+
+  let A=
+    toScreen(
+      candidate.A
+    );
+
+  let B=
+    toScreen(
+      candidate.B
+    );
+
+  if(previousEnds){
+
+    const normal=
+      distance(
+        A,
+        previousEnds.A
+      )+
+      distance(
+        B,
+        previousEnds.B
+      );
+
+    const swapped=
+      distance(
+        A,
+        previousEnds.B
+      )+
+      distance(
+        B,
+        previousEnds.A
+      );
+
+    if(swapped<normal){
+
+      const temp=A;
+      A=B;
+      B=temp;
+    }
+  }
+
+  return{
+
+    A,
+    B,
+
+    center:
+      toScreen(
+        candidate.center
+      )
+  };
+}
+
+
+/* =========================================================
+   APRENDER OBJETO
+   ========================================================= */
+
+function captureObject(){
+
+  if(!background){
+
+    setMessage(
+      "Primero captura el fondo."
+    );
+
+    return;
+  }
+
+  const mask=
+    createMask();
+
+  const candidates=
+    findCandidates(
+      mask
+    );
+
+  const candidate=
+    chooseCandidate(
+      candidates
+    );
+
+  if(!candidate){
+
+    setMessage(
+      "❌ No encuentro el objeto."
+    );
+
+    setStatus(
+      "Objeto no encontrado",
+      "orange"
+    );
+
+    details.textContent=
+      "Usa un objeto alargado y sepáralo del fondo.";
+
+    return;
+  }
+
+  objectModel={
+
+    length:
+      candidate.length,
+
+    aspect:
+      candidate.aspect,
+
+    area:
+      candidate.area
+  };
+
+  previousEnds=null;
+  previousTip=null;
+
+  stableFrames=0;
+  lostFrames=0;
+
+  saveProfile();
+
+  setMessage(
+    "✅ Objeto aprendido y guardado."
+  );
+
+  setStatus(
+    "Objeto aprendido · listo para tracking",
+    "green"
+  );
+
+  details.textContent=
+    "Perfil de forma guardado localmente.";
+}
+
+
+/* =========================================================
+   PUNTAS
+   ========================================================= */
+
+function updateTipButtons(){
+
+  tipABtn.style.outline=
+    selectedTip==="A"
+      ? "2px solid white"
+      : "none";
+
+  tipBBtn.style.outline=
+    selectedTip==="B"
+      ? "2px solid white"
+      : "none";
+}
+
+
+function selectTip(tip){
+
+  if(!objectModel){
+
+    setMessage(
+      "Primero aprende el objeto."
+    );
+
+    return;
+  }
+
+  selectedTip=tip;
+
+  previousTip=null;
+  filteredTip=null;
+  predictedTip=null;
+  previousAngle=null;
+
+  updateTipButtons();
+
+  saveProfile();
+
+  setMessage(
+    "🎯 Punta "+tip+" seleccionada."
+  );
+}
+
+
+/* =========================================================
+   HOMOGRAFÍA
+   ========================================================= */
+
+function solveLinear(A,b){
+
+  const n=b.length;
+
+  const M=
+    A.map(
+      (row,i)=>
+        row.slice().concat(
+          b[i]
+        )
+    );
+
+  for(
+    let c=0;
+    c<n;
+    c++
+  ){
+
+    let pivot=c;
+
+    for(
+      let r=c+1;
+      r<n;
+      r++
+    ){
+
+      if(
+        Math.abs(
+          M[r][c]
+        )>
+        Math.abs(
+          M[pivot][c]
+        )
+      ){
+
+        pivot=r;
+      }
+    }
+
+    if(
+      Math.abs(
+        M[pivot][c]
+      )<1e-10
+    ){
+
+      return null;
+    }
+
+    [
+      M[c],
+      M[pivot]
+    ]=[
+      M[pivot],
+      M[c]
+    ];
+
+    const divisor=
+      M[c][c];
+
+    for(
+      let j=c;
+      j<=n;
+      j++
+    ){
+
+      M[c][j]/=
+        divisor;
+    }
+
+    for(
+      let r=0;
+      r<n;
+      r++
+    ){
+
+      if(r===c)
+        continue;
+
+      const factor=
+        M[r][c];
+
+      for(
+        let j=c;
+        j<=n;
+        j++
+      ){
+
+        M[r][j]-=
+          factor*
+          M[c][j];
+      }
+    }
+  }
+
+  return M.map(
+    row=>row[n]
+  );
+}
+
+
+function fitHomography(
+  src,
+  dst
+){
+
+  const A=[];
+  const b=[];
+
+  for(
+    let i=0;
+    i<src.length;
+    i++
+  ){
+
+    const x=src[i].x;
+    const y=src[i].y;
+
+    const X=dst[i].x;
+    const Y=dst[i].y;
+
+    A.push([
+      x,y,1,
+      0,0,0,
+      -X*x,
+      -X*y
+    ]);
+
+    b.push(X);
+
+    A.push([
+      0,0,0,
+      x,y,1,
+      -Y*x,
+      -Y*y
+    ]);
+
+    b.push(Y);
+  }
+
+  const AtA=
+    Array.from(
+      {length:8},
+      ()=>Array(8).fill(0)
+    );
+
+  const Atb=
+    Array(8).fill(0);
+
+  for(
+    let i=0;
+    i<A.length;
+    i++
+  ){
+
+    for(
+      let j=0;
+      j<8;
+      j++
+    ){
+
+      Atb[j]+=
+        A[i][j]*
+        b[i];
+
+      for(
+        let k=0;
+        k<8;
+        k++
+      ){
+
+        AtA[j][k]+=
+          A[i][j]*
+          A[i][k];
+      }
+    }
+  }
+
+  return solveLinear(
+    AtA,
+    Atb
+  );
+}
+
+
+function applyHomography(
+  h,
+  p
+){
+
+  if(!h)
+    return p;
+
+  const denominator=
+    h[6]*p.x+
+    h[7]*p.y+
+    1;
+
+  if(
+    Math.abs(
+      denominator
+    )<1e-10
+  ){
+
+    return p;
+  }
+
+  return{
+
+    x:
+      (
+        h[0]*p.x+
+        h[1]*p.y+
+        h[2]
+      )/
+      denominator,
+
+    y:
+      (
+        h[3]*p.x+
+        h[4]*p.y+
+        h[5]
+      )/
+      denominator
+  };
+}
+
+
+/* =========================================================
+   CALIBRACIÓN
+   ========================================================= */
+
+function getCalibrationTargets(){
+
+  const w=
+    canvas.clientWidth;
+
+  const h=
+    canvas.clientHeight;
+
+  return[
+
+    {
+      x:w*.10,
+      y:h*.10
+    },
+
+    {
+      x:w*.90,
+      y:h*.10
+    },
+
+    {
+      x:w*.90,
+      y:h*.90
+    },
+
+    {
+      x:w*.10,
+      y:h*.90
+    },
+
+    {
+      x:w*.50,
+      y:h*.50
+    }
+
+  ];
+}
+
+
+function showCalibrationTarget(){
+
+  if(targetElement){
+
+    targetElement.remove();
+
+    targetElement=null;
+  }
+
+  const targets=
+    getCalibrationTargets();
+
+  const target=
+    targets[
+      calibrationTargetIndex
+    ];
+
+  targetElement=
+    document.createElement(
+      "div"
+    );
+
+  targetElement.className=
+    "target";
+
+  targetElement.style.left=
+    target.x+"px";
+
+  targetElement.style.top=
+    target.y+"px";
+
+  stage.appendChild(
+    targetElement
+  );
+
+  const label=
+    document.createElement(
+      "div"
+    );
+
+  label.className=
+    "calibrationLabel";
+
+  label.textContent=
+    "PUNTO "+
+    (calibrationTargetIndex+1)+
+    " / 5";
+
+  targetElement.appendChild(
+    label
+  );
+}
+
+
+function startCalibration(){
+
+  if(!objectModel){
+
+    setMessage(
+      "Primero aprende el objeto."
+    );
+
+    return;
+  }
+
+  calibrationMode=true;
+
+  calibrationPoints=[];
+
+  calibrationTargetIndex=0;
+
+  capturePointBtn.classList.remove(
+    "hidden"
+  );
+
+  calibrationBtn.textContent=
+    "🎯 CALIBRACIÓN EN CURSO";
+
+  showCalibrationTarget();
+
+  setStatus(
+    "Calibración · punto 1 de 5",
+    "orange"
+  );
+
+  setMessage(
+    "🎯 Lleva la punta al círculo."
+  );
+
+  details.textContent=
+    "Cuando esté alineada, pulsa «Capturar punto».";
+}
+
+
+function captureCalibrationPoint(){
+
+  if(!calibrationMode)
+    return;
+
+  if(!filteredTip){
+
+    setMessage(
+      "No estoy viendo la punta."
+    );
+
+    return;
+  }
+
+  const targets=
+    getCalibrationTargets();
+
+  const target=
+    targets[
+      calibrationTargetIndex
+    ];
+
+  calibrationPoints.push({
+
+    src:{
+      x:filteredTip.x,
+      y:filteredTip.y
+    },
+
+    dst:{
+      x:target.x,
+      y:target.y
+    }
+
+  });
+
+  calibrationTargetIndex++;
+
+  if(
+    calibrationTargetIndex>=5
+  ){
+
+    finishCalibration();
+
+    return;
+  }
+
+  showCalibrationTarget();
+
+  setStatus(
+    "Calibración · punto "+
+    (calibrationTargetIndex+1)+
+    " de 5",
+    "orange"
+  );
+
+  setMessage(
+    "📍 Punto capturado."
+  );
+
+  details.textContent=
+    "Continúa con el siguiente punto.";
+}
+
+
+function finishCalibration(){
+
+  const src=
+    calibrationPoints.map(
+      p=>p.src
+    );
+
+  const dst=
+    calibrationPoints.map(
+      p=>p.dst
+    );
+
+  const h=
+    fitHomography(
+      src,
+      dst
+    );
+
+  if(!h){
+
+    setMessage(
+      "❌ No se pudo calcular la calibración."
+    );
+
+    return;
+  }
+
+  homography=h;
+
+  calibrationMode=false;
+
+  capturePointBtn.classList.add(
+    "hidden"
+  );
+
+  calibrationBtn.textContent=
+    "🎯 CALIBRAR PANTALLA · 5 PUNTOS";
+
+  if(targetElement){
+
+    targetElement.remove();
+
+    targetElement=null;
+  }
+
+  saveProfile();
+
+  const error=
+    calibrationError(
+      h,
+      src,
+      dst
+    );
+
+  let quality="Excelente";
+
+  if(error>18)
+    quality="Ajustar";
+
+  if(error>35)
+    quality="Recalibrar";
+
+  setStatus(
+    "Calibración · "+quality,
+    error<=18
+      ? "green"
+      : "orange"
+  );
+
+  setMessage(
+    "✅ Pantalla calibrada."
+  );
+
+  details.textContent=
+    "Error medio: "+
+    error.toFixed(1)+
+    " px · "+
+    quality+".";
+}
+
+
+function calibrationError(
+  h,
+  src,
+  dst
+){
+
+  let sum=0;
+
+  for(
+    let i=0;
+    i<src.length;
+    i++
+  ){
+
+    const p=
+      applyHomography(
+        h,
+        src[i]
+      );
+
+    sum+=
+      distance(
+        p,
+        dst[i]
+      );
+  }
+
+  return sum/src.length;
+}
+
+
+/* =========================================================
+   PUNTERO
+   ========================================================= */
+
+function updatePointer(tip){
+
+  let p=tip;
+
+  if(homography){
+
+    p=
+      applyHomography(
+        homography,
+        tip
+      );
+  }
+
+  const w=
+    canvas.clientWidth;
+
+  const h=
+    canvas.clientHeight;
+
+  p={
+    x:clamp(
+      p.x,
+      0,
+      w
+    ),
+
+    y:clamp(
+      p.y,
+      0,
+      h
+    )
+  };
+
+  pointer.style.left=
+    p.x+"px";
+
+  pointer.style.top=
+    p.y+"px";
+
+  pointer.classList.remove(
+    "hidden"
+  );
+}
+
+
+/* =========================================================
+   TRACKING PREMIUM
+   ========================================================= */
+
+function updateTracking(
+  tip,
+  now
+){
+
+  rawTip={
+    ...tip
+  };
+
+  if(!previousTip){
+
+    filteredTip={
+      ...tip
+    };
+
+    predictedTip={
+      ...tip
+    };
+
+    previousTip={
+      ...tip
+    };
+
+    previousTime=now;
+
+    return{
+      point:filteredTip,
+      speed:0
+    };
+  }
+
+  const dt=
+    Math.max(
+      .001,
+      (now-previousTime)/1000
+    );
+
+  const dx=
+    tip.x-
+    previousTip.x;
+
+  const dy=
+    tip.y-
+    previousTip.y;
+
+  const vx=
+    dx/dt;
+
+  const vy=
+    dy/dt;
+
+  const speed=
+    Math.hypot(
+      vx,
+      vy
+    );
+
+  lastSpeed=speed;
+
+  const smoothing=
+    Number(
+      smoothRange.value
+    );
+
+  /*
+   * Cuando el objeto se mueve rápido
+   * reducimos ligeramente el suavizado
+   * para mantener respuesta.
+   */
+
+  const dynamicSmooth=
+    clamp(
+      smoothing-
+      Math.min(
+        .22,
+        speed/2200
+      ),
+      .15,
+      .92
+    );
+
+  filteredTip=
+    smoothPoint(
+      filteredTip,
+      tip,
+      dynamicSmooth
+    );
+
+  /*
+   * Predicción muy corta.
+   * No pretende adivinar el futuro;
+   * compensa pequeñas latencias visuales.
+   */
+
+  const predictionTime=
+    .025;
+
+  predictedTip={
+    x:
+      filteredTip.x+
+      vx*
+      predictionTime,
+
+    y:
+      filteredTip.y+
+      vy*
+      predictionTime
+  };
+
+  previousTip={
+    ...tip
+  };
+
+  previousTime=now;
+
+  return{
+    point:predictedTip,
+    speed
+  };
+}
+
+
+/* =========================================================
+   ESTABILIDAD
+   ========================================================= */
+
+function updateStability(
+  candidate,
+  ends
+){
+
+  if(!candidate){
+
+    lostFrames++;
+
+    stableFrames=
+      Math.max(
+        0,
+        stableFrames-2
+      );
+
+    stabilityScore=
+      Math.max(
+        0,
+        stabilityScore-4
+      );
+
+    updatePrecision();
+
+    return;
+  }
+
+  lostFrames=0;
+
+  stableFrames++;
+
+  let quality=1;
+
+  if(previousEnds){
+
+    const jump=
+      distance(
+        ends.center,
+        previousEnds.center
+      );
+
+    if(jump>55)
+      quality=.45;
+
+    else if(jump>30)
+      quality=.72;
+
+    else if(jump>16)
+      quality=.88;
+  }
+
+  stabilityScore=
+    lerp(
+      stabilityScore,
+      100*quality,
+      .14
+    );
+
+  updatePrecision();
+}
+
+
+/* =========================================================
+   GESTOS BÁSICOS
+   ========================================================= */
+
+function processBasicGesture(
+  tip,
+  angle,
+  speed
+){
+
+  const now=
+    performance.now();
+
+  if(!previousTip)
+    return;
+
+  const dt=
+    Math.max(
+      .001,
+      (now-previousTime)/1000
+    );
+
+  const dx=
+    tip.x-
+    previousTip.x;
+
+  const dy=
+    tip.y-
+    previousTip.y;
+
+  /*
+   * Para evitar que un salto del tracking
+   * sea interpretado como gesto.
+   */
+
+  if(
+    speed>170 &&
+    speed<1800 &&
+    now-lastGestureTime>450
+  ){
+
+    let g="";
+
+    if(
+      Math.abs(dx)>
+      Math.abs(dy)
+    ){
+
+      g=
+        dx>0
+        ? "➡️ DERECHA"
+        : "⬅️ IZQUIERDA";
+
+    }else{
+
+      g=
+        dy>0
+        ? "⬇️ ABAJO"
+        : "⬆️ ARRIBA";
+    }
+
+    gesture.textContent=g;
+
+    lastGestureTime=now;
+
+    if(
+      navigator.vibrate
+    ){
+
+      navigator.vibrate(35);
+    }
+  }
+
+
+  if(
+    previousAngle!==null &&
+    speed<650
+  ){
+
+    const da=
+      angleDiff(
+        angle,
+        previousAngle
+      );
+
+    if(
+      Math.abs(da)>.28 &&
+      now-lastGestureTime>600
+    ){
+
+      gesture.textContent=
+        da>0
+          ? "↻ ROTACIÓN"
+          : "↺ ROTACIÓN";
+
+      lastGestureTime=now;
+    }
+  }
+
+  previousAngle=angle;
+}
+
+
+/* =========================================================
+   RESAMPLE
+   ========================================================= */
+
+function resamplePath(
+  points,
+  n=32
+){
+
+  if(points.length<2)
+    return points;
+
+  const pts=
+    points.map(
+      p=>({
+        x:p.x,
+        y:p.y
+      })
+    );
+
+  let total=0;
+
+  for(
+    let i=1;
+    i<pts.length;
+    i++
+  ){
+
+    total+=
+      distance(
+        pts[i-1],
+        pts[i]
+      );
+  }
+
+  if(total===0)
+    return pts;
+
+  const interval=
+    total/(n-1);
+
+  const result=[
+    pts[0]
+  ];
+
+  let D=0;
+  let i=1;
+
+  while(
+    i<pts.length
+  ){
+
+    const d=
+      distance(
+        pts[i-1],
+        pts[i]
+      );
+
+    if(
+      D+d>=interval
+    ){
+
+      const t=
+        (interval-D)/d;
+
+      const q={
+
+        x:
+          pts[i-1].x+
+          t*
+          (
+            pts[i].x-
+            pts[i-1].x
+          ),
+
+        y:
+          pts[i-1].y+
+          t*
+          (
+            pts[i].y-
+            pts[i-1].y
+          )
+
+      };
+
+      result.push(q);
+
+      pts.splice(
+        i,
+        0,
+        q
+      );
+
+      D=0;
+
+    }else{
+
+      D+=d;
+      i++;
+    }
+
+    if(result.length>=n)
+      break;
+  }
+
+  while(
+    result.length<n
+  ){
+
+    result.push(
+      pts[
+        pts.length-1
+      ]
+    );
+  }
+
+  return result.slice(
+    0,
+    n
+  );
+}
+
+
+/* =========================================================
+   NORMALIZAR GESTO
+   ========================================================= */
+
+function normalizePath(
+  points
+){
+
+  const pts=
+    resamplePath(
+      points,
+      32
+    );
+
+  if(pts.length<2)
+    return [];
+
+  let minX=Infinity;
+  let maxX=-Infinity;
+
+  let minY=Infinity;
+  let maxY=-Infinity;
+
+  for(const p of pts){
+
+    minX=
+      Math.min(
+        minX,
+        p.x
+      );
+
+    maxX=
+      Math.max(
+        maxX,
+        p.x
+      );
+
+    minY=
+      Math.min(
+        minY,
+        p.y
+      );
+
+    maxY=
+      Math.max(
+        maxY,
+        p.y
+      );
+  }
+
+  const width=
+    Math.max(
+      1,
+      maxX-minX
+    );
+
+  const height=
+    Math.max(
+      1,
+      maxY-minY
+    );
+
+  const scale=
+    Math.max(
+      width,
+      height
+    );
+
+  const cx=
+    pts.reduce(
+      (s,p)=>s+p.x,
+      0
+    )/
+    pts.length;
+
+  const cy=
+    pts.reduce(
+      (s,p)=>s+p.y,
+      0
+    )/
+    pts.length;
+
+  return pts.map(
+    p=>({
+
+      x:
+        (p.x-cx)/
+        scale,
+
+      y:
+        (p.y-cy)/
+        scale
+
+    })
+  );
+}
+
+
+/* =========================================================
+   DISTANCIA DE GESTOS
+   ========================================================= */
+
+function pathDistance(
+  a,
+  b
+){
+
+  const n=
+    Math.min(
+      a.length,
+      b.length
+    );
+
+  if(!n)
+    return Infinity;
+
+  let sum=0;
+
+  for(
+    let i=0;
+    i<n;
+    i++
+  ){
+
+    sum+=
+      Math.hypot(
+        a[i].x-b[i].x,
+        a[i].y-b[i].y
+      );
+  }
+
+  return sum/n;
+}
+
+
+/* =========================================================
+   RECONOCIMIENTO
+   ========================================================= */
+
+function recognizeCustomGesture(
+  path
+){
+
+  if(
+    customGestures.length===0 ||
+    path.length<10
+  )
+    return;
+
+  const normalized=
+    normalizePath(
+      path
+    );
+
+  let best=null;
+  let bestDistance=Infinity;
+
+  for(
+    const g of customGestures
+  ){
+
+    const d=
+      pathDistance(
+        normalized,
+        g.template
+      );
+
+    if(
+      d<bestDistance
+    ){
+
+      bestDistance=d;
+      best=g;
+    }
+  }
+
+  if(
+    best &&
+    bestDistance<.28
+  ){
+
+    gesture.textContent=
+      "🧠 "+
+      best.name;
+
+    executeAction(
+      best.action
+    );
+  }
+}
+
+
+/* =========================================================
+   GRABACIÓN
+   ========================================================= */
+
+function startRecording(){
+
+  if(!objectModel){
+
+    setMessage(
+      "Primero aprende el objeto."
+    );
+
+    return;
+  }
+
+  recordingGesture=true;
+
+  recordedPath=[];
+
+  recordingStart=
+    performance.now();
+
+  recordGestureBtn.textContent=
+    "⏹️ DETENER GRABACIÓN";
+
+  setMessage(
+    "🔴 Grabando gesto..."
+  );
+
+  setStatus(
+    "Gesture Lab · grabando",
+    "orange"
+  );
+
+  details.textContent=
+    "Haz el movimiento y detén la grabación.";
+}
+
+
+function stopRecording(){
+
+  recordingGesture=false;
+
+  recordGestureBtn.textContent=
+    "🔴 GRABAR GESTO";
+
+  if(
+    recordedPath.length<10
+  ){
+
+    setMessage(
+      "⚠️ Gesto demasiado corto."
+    );
+
+    return;
+  }
+
+  const name=
+    gestureName.value.trim() ||
+    "Gesto "+
+    (
+      customGestures.length+1
+    );
+
+  const action=
+    customAction.value;
+
+  const template=
+    normalizePath(
+      recordedPath
+    );
+
+  customGestures.push({
+
+    name,
+    action,
+    template
+  });
+
+  saveProfile();
+
+  updateCustomGestureInfo();
+
+  setStatus(
+    "Gesture Lab · listo",
+    "green"
+  );
+
+  setMessage(
+    "🧠 Gesto «"+
+    name+
+    "» guardado."
+  );
+}
+
+
+function updateCustomGestureInfo(){
+
+  if(
+    customGestures.length===0
+  ){
+
+    customGestureInfo.textContent=
+      "Todavía no hay gestos personalizados.";
+
+    return;
+  }
+
+  customGestureInfo.innerHTML=
+    customGestures
+      .map(
+        g=>
+          '<span class="badge greenBadge">'+
+          g.name+
+          '</span>'
+      )
+      .join("");
+}
+
+
+/* =========================================================
+   ACCIONES
+   ========================================================= */
+
+function executeAction(
+  action
+){
+
+  if(action==="siguiente"){
+
+    gesture.textContent=
+      "⏭️ SIGUIENTE";
+
+    if(
+      window.GestureWandBridge &&
+      window.GestureWandBridge.siguiente
+    ){
+
+      window.GestureWandBridge.siguiente();
+    }
+
+    return;
+  }
+
+
+  if(action==="anterior"){
+
+    gesture.textContent=
+      "⏮️ ANTERIOR";
+
+    if(
+      window.GestureWandBridge &&
+      window.GestureWandBridge.anterior
+    ){
+
+      window.GestureWandBridge.anterior();
+    }
+
+    return;
+  }
+
+
+  if(action==="reiniciar"){
+
+    previousTip=null;
+    filteredTip=null;
+    predictedTip=null;
+    previousEnds=null;
+
+    gesture.textContent=
+      "🔄 REINICIADO";
+
+    return;
+  }
+
+
+  gesture.textContent=
+    "⚡ ACCIÓN";
+}
+
+
+/* =========================================================
+   SENSORES
+   ========================================================= */
+
+async function activateSensors(){
+
+  try{
+
+    if(
+      typeof DeviceMotionEvent!=="undefined" &&
+      typeof DeviceMotionEvent.requestPermission===
+        "function"
+    ){
+
+      const permission=
+        await DeviceMotionEvent
+        .requestPermission();
+
+      if(
+        permission!=="granted"
+      ){
+
+        setMessage(
+          "⚠️ Permiso de movimiento no concedido."
+        );
+
+        return;
+      }
+    }
+
+
+    if(
+      typeof DeviceOrientationEvent!=="undefined" &&
+      typeof DeviceOrientationEvent.requestPermission===
+        "function"
+    ){
+
+      const permission=
+        await DeviceOrientationEvent
+        .requestPermission();
+
+      if(
+        permission!=="granted"
+      ){
+
+        setMessage(
+          "⚠️ Permiso de orientación no concedido."
+        );
+
+        return;
+      }
+    }
+
+
+    window.addEventListener(
+      "devicemotion",
+      handleMotion
+    );
+
+    window.addEventListener(
+      "deviceorientation",
+      handleOrientation
+    );
+
+    sensorsActive=true;
+
+    sensorBtn.textContent=
+      "📱 SENSORES ACTIVOS";
+
+    setMessage(
+      "📱 Sensores activos."
+    );
+
+    saveProfile();
+
+  }catch(err){
+
+    console.error(err);
+
+    setMessage(
+      "❌ No se pudieron activar los sensores."
+    );
+  }
+}
+
+
+function handleMotion(event){
+
+  const a=
+    event.accelerationIncludingGravity;
+
+  if(!a)
+    return;
+
+  sensorState.ax=
+    a.x||0;
+
+  sensorState.ay=
+    a.y||0;
+
+  sensorState.az=
+    a.z||0;
+
+  updateSensorDisplay();
+
+  const magnitude=
+    Math.hypot(
+      sensorState.ax,
+      sensorState.ay,
+      sensorState.az
+    );
+
+  if(
+    magnitude>18 &&
+    performance.now()-
+      lastGestureTime>
+      700
+  ){
+
+    gesture.textContent=
+      "📳 SHAKE";
+
+    lastGestureTime=
+      performance.now();
+
+    if(
+      navigator.vibrate
+    ){
+
+      navigator.vibrate(
+        [35,25,35]
+      );
+    }
+  }
+}
+
+
+function handleOrientation(event){
+
+  sensorState.alpha=
+    event.alpha||0;
+
+  sensorState.beta=
+    event.beta||0;
+
+  sensorState.gamma=
+    event.gamma||0;
+
+  updateSensorDisplay();
+}
+
+
+function updateSensorDisplay(){
+
+  sensorData.innerHTML=
+
+    "Aceleración: "+
+    sensorState.ax.toFixed(1)+
+    " / "+
+    sensorState.ay.toFixed(1)+
+    " / "+
+    sensorState.az.toFixed(1)+
+    "<br>"+
+
+    "Orientación: "+
+    sensorState.alpha.toFixed(1)+
+    " / "+
+    sensorState.beta.toFixed(1)+
+    " / "+
+    sensorState.gamma.toFixed(1);
+}
+
+
+/* =========================================================
+   DIBUJAR
+   ========================================================= */
+
+function drawCandidate(
+  candidate,
+  ends
+){
+
+  ctx.clearRect(
+    0,
+    0,
+    canvas.width,
+    canvas.height
+  );
+
+  if(!candidate)
+    return;
+
+  /*
+   * Eje principal.
+   */
+
+  ctx.beginPath();
+
+  ctx.moveTo(
+    ends.A.x,
+    ends.A.y
+  );
+
+  ctx.lineTo(
+    ends.B.x,
+    ends.B.y
+  );
+
+  ctx.lineWidth=3;
+
+  ctx.strokeStyle=
+    "#00e88a";
+
+  ctx.stroke();
+
+
+  /*
+   * Extremos.
+   */
+
+  for(
+    const point of [
+      ends.A,
+      ends.B
+    ]
+  ){
+
+    ctx.beginPath();
+
+    ctx.arc(
+      point.x,
+      point.y,
+      8,
+      0,
+      Math.PI*2
+    );
+
+    ctx.fillStyle=
+      "#ffffff";
+
+    ctx.fill();
+  }
+
+
+  /*
+   * Punta seleccionada.
+   */
+
+  const active=
+    selectedTip==="A"
+      ? ends.A
+      : ends.B;
+
+  ctx.beginPath();
+
+  ctx.arc(
+    active.x,
+    active.y,
+    17,
+    0,
+    Math.PI*2
+  );
+
+  ctx.strokeStyle=
+    "#00e88a";
+
+  ctx.lineWidth=3;
+
+  ctx.stroke();
+
+
+  /*
+   * Posición calibrada.
+   */
+
+  if(homography){
+
+    const mapped=
+      applyHomography(
+        homography,
+        active
+      );
+
+    ctx.beginPath();
+
+    ctx.arc(
+      mapped.x,
+      mapped.y,
+      6,
+      0,
+      Math.PI*2
+    );
+
+    ctx.fillStyle=
+      "#28c7ff";
+
+    ctx.fill();
+  }
+}
+
+
+/* =========================================================
+   BUCLE PRINCIPAL
+   ========================================================= */
+
+function scan(){
+
+  if(!running)
+    return;
+
+  if(
+    video.readyState>=2 &&
+    video.videoWidth>0
+  ){
+
+    canvas.width=
+      video.clientWidth;
+
+    canvas.height=
+      video.clientHeight;
+
+    frameCounter++;
+
+    const now=
+      performance.now();
+
+    if(
+      now-fpsTimer>=1000
+    ){
+
+      detectionFPS=
+        frameCounter;
+
+      frameCounter=0;
+
+      fpsTimer=now;
+    }
+
+
+    if(background){
+
+      const mask=
+        createMask();
+
+      if(mask){
+
+        const candidates=
+          findCandidates(
+            mask
+          );
+
+        const candidate=
+          chooseCandidate(
+            candidates
+          );
+
+        if(candidate){
+
+          const ends=
+            stabilizeEnds(
+              candidate
+            );
+
+          updateStability(
+            candidate,
+            ends
+          );
+
+          /*
+           * Guardamos extremos después
+           * de calcular estabilidad.
+           */
+
+          previousEnds=ends;
+
+          drawCandidate(
+            candidate,
+            ends
+          );
+
+          const tip=
+            selectedTip==="A"
+              ? ends.A
+              : ends.B;
+
+          const tracking=
+            updateTracking(
+              tip,
+              now
+            );
+
+          const activeTip=
+            tracking.point;
+
+          updatePointer(
+            activeTip
+          );
+
+          processBasicGesture(
+            activeTip,
+            Math.atan2(
+              ends.B.y-ends.A.y,
+              ends.B.x-ends.A.x
+            ),
+            tracking.speed
+          );
+
+
+          speedMetric.textContent=
+            Math.round(
+              tracking.speed
+            )+
+            " px/s";
+
+
+          /*
+           * Grabación de Gesture Lab.
+           */
+
+          if(recordingGesture){
+
+            recordedPath.push({
+
+              x:activeTip.x,
+              y:activeTip.y
+
+            });
+
+            if(
+              now-
+              recordingStart>
+              10000
+            ){
+
+              stopRecording();
+            }
+          }
+
+
+          /*
+           * Reconocimiento automático.
+           */
+
+          if(
+            !recordingGesture
+          ){
+
+            liveStroke.push({
+
+              x:activeTip.x,
+              y:activeTip.y
+
+            });
+
+            clearTimeout(
+              strokeTimer
+            );
+
+            strokeTimer=
+              setTimeout(
+                ()=>{
+
+                  if(
+                    liveStroke.length>12
+                  ){
+
+                    recognizeCustomGesture(
+                      liveStroke
+                    );
+                  }
+
+                  liveStroke=[];
+
+                },
+                650
+              );
+          }
+
+
+          setStatus(
+            homography
+              ? "TRACKING · CALIBRADO"
+              : "TRACKING · SIN CALIBRAR",
+            "green"
+          );
+
+          details.textContent=
+            "Forma "+
+            candidate.aspect
+              .toFixed(1)+
+            "× · "+
+            "Longitud "+
+            Math.round(
+              candidate.length
+            )+
+            " · "+
+            detectionFPS+
+            " FPS";
+
+          lastDetectionTime=now;
+
+        }else{
+
+          ctx.clearRect(
+            0,
+            0,
+            canvas.width,
+            canvas.height
+          );
+
+          pointer.classList.add(
+            "hidden"
+          );
+
+          speedMetric.textContent=
+            "—";
+
+          setStatus(
+            "Buscando objeto...",
+            "orange"
+          );
+        }
+      }
+    }
+  }
+
+  requestAnimationFrame(
+    scan
+  );
+}
+
+
+/* =========================================================
+   RESET
+   ========================================================= */
+
+function resetAll(){
+
+  objectModel=null;
+
+  background=null;
+
+  homography=null;
+
+  previousEnds=null;
+
+  previousTip=null;
+
+  rawTip=null;
+
+  filteredTip=null;
+
+  predictedTip=null;
+
+  previousAngle=null;
+
+  calibrationMode=false;
+
+  calibrationPoints=[];
+
+  customGestures=[];
+
+  stableFrames=0;
+  lostFrames=0;
+
+  stabilityScore=0;
+
+  localStorage.removeItem(
+    PROFILE_KEY
+  );
+
+  pointer.classList.add(
+    "hidden"
+  );
+
+  if(targetElement){
+
+    targetElement.remove();
+
+    targetElement=null;
+  }
+
+  capturePointBtn.classList.add(
+    "hidden"
+  );
+
+  calibrationBtn.textContent=
+    "🎯 CALIBRAR PANTALLA · 5 PUNTOS";
+
+  updateCustomGestureInfo();
+
+  updatePrecision();
+
+  ctx.clearRect(
+    0,
+    0,
+    canvas.width,
+    canvas.height
+  );
+
+  setStatus(
+    "Configuración borrada",
+    "orange"
+  );
+
+  setMessage(
+    "🔄 Configuración borrada."
+  );
+
+  details.textContent=
+    "Captura nuevamente el fondo y aprende el objeto.";
+}
+
+
+/* =========================================================
+   EVENTOS
+   ========================================================= */
+
+startBtn.addEventListener(
+  "click",
+  startCamera
+);
+
+backgroundBtn.addEventListener(
+  "click",
+  captureBackground
+);
+
+objectBtn.addEventListener(
+  "click",
+  captureObject
+);
+
+tipABtn.addEventListener(
+  "click",
+  ()=>selectTip("A")
+);
+
+tipBBtn.addEventListener(
+  "click",
+  ()=>selectTip("B")
+);
+
+calibrationBtn.addEventListener(
+  "click",
+  startCalibration
+);
+
+capturePointBtn.addEventListener(
+  "click",
+  captureCalibrationPoint
+);
+
+sensorBtn.addEventListener(
+  "click",
+  activateSensors
+);
+
+resetBtn.addEventListener(
+  "click",
+  resetAll
+);
+
+smoothRange.addEventListener(
+  "input",
+  ()=>{
+    saveProfile();
+  }
+);
+
+recordGestureBtn.addEventListener(
+  "click",
+  ()=>{
+
+    if(recordingGesture)
+      stopRecording();
+
+    else
+      startRecording();
+
+  }
+);
+
+clearGesturesBtn.addEventListener(
+  "click",
+  ()=>{
+
+    customGestures=[];
+
+    saveProfile();
+
+    updateCustomGestureInfo();
+
+    setMessage(
+      "🗑️ Gestos personalizados borrados."
+    );
+  }
+);
+
+
+/* =========================================================
+   INICIO
+   ========================================================= */
+
+const profileLoaded=
+  loadProfile();
+
+if(profileLoaded){
+
+  setMessage(
+    "💾 Perfil V4 recuperado."
+  );
+
+  setStatus(
+    "Perfil cargado · cámara pendiente",
+    "green"
+  );
+
+  details.textContent=
+    "Tu objeto, calibración y gestos están guardados localmente.";
+
+}else{
+
+  setStatus(
+    "Esperando cámara",
+    "normal"
+  );
+
+  details.textContent=
+    "Captura el fondo y aprende un objeto alargado.";
+}
+
+updateTipButtons();
+
+updateCustomGestureInfo();
+
+updatePrecision();
+
+</script>
+
+</body>
+</html>
